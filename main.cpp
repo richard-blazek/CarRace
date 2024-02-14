@@ -105,6 +105,8 @@ void DrawTerrain(SDL_Renderer *rend, const Terrain &terrain)
 
 int main()
 {
+	SDL_Init(SDL_INIT_EVERYTHING);
+
 	Terrain terrain = {
 		"#################################################",
 		"####               ##############         #######",
@@ -195,5 +197,6 @@ int main()
 
 	SDL_DestroyRenderer(rend);
 	SDL_DestroyWindow(window);
+	SDL_Quit();
 	return 0;
 }
