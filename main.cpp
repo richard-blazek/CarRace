@@ -1,191 +1,199 @@
 #include <iostream>
-#include "objsdl/objsdl.h"
-#include "mylibraries/dynarr.h"
-#include "mylibraries/mat.h"
+#include <string>
+#include <vector>
+#include <cmath>
+#include <SDL.h>
 
-using namespace std;
-using containers::DynArr;
+constexpr int unit = 25;
 
-constexpr int unit=20;
-constexpr SDL::Point square(unit, unit);
+using Terrain = std::vector<std::string>;
 
-template<typename mapa_typ>
-bool IsFreePoint(const mapa_typ& mapa, SDL::Point point)
+// Solve n1/d1 < n2/d2 for non-negative integers
+bool IsLesserRatio(int n1, int d1, int n2, int d2)
 {
-    return mapa[point.y/unit][point.x/unit]==' ';
+	if (d1 == 0) return false;
+	if (d2 == 0) return true;
+	return std::abs(d2) * std::abs(n1) < std::abs(d1) * std::abs(n2);
 }
 
-template<typename mapa_typ>
-bool IsFreeLine(const mapa_typ& mapa, SDL::Line line)
+class RaceCar
 {
-    SDL::Vector way(line);
-    for(SDL::Vector piece(way.begin, 1, way.move.angle); piece.move.lenght<way.move.lenght; ++piece.move.lenght)
-	{
-        if(!IsFreePoint(mapa, piece.GetEnd()))
-		{
-			return false;
-		}
-	}
-	return true;
-}
+private:
+	int x, y, dx = 0, dy = 0;
 
-struct Formule
-{
-	SDL::Point pos;
-	SDL::Point move;
-	Formule(SDL::Point begin):pos(begin), move(0,0){}
-	SDL::Rect Destination()const
+	static bool MovePossible(const Terrain &terrain, int x, int y, int x2, int y2, int avoid_x, int avoid_y)
 	{
-		return SDL::Rect(pos+move-SDL::Point(unit,unit), square*3);
-	}
-	SDL::Rect Location()const
-	{
-		return SDL::Rect(pos, square);
-	}
-	template<typename mapa_typ>
-	DynArr<SDL::Rect> FreeDestinations(const mapa_typ& mapa)const
-	{
-		auto position=Destination().Position();
-		DynArr<SDL::Rect> destinations(9);
-		destinations[0]=SDL::Rect(position+SDL::Point(0, 0), square);
-		destinations[1]=SDL::Rect(position+SDL::Point(0, unit), square);
-		destinations[2]=SDL::Rect(position+SDL::Point(0, 2*unit), square);
-		destinations[3]=SDL::Rect(position+SDL::Point(unit, 0), square);
-		destinations[4]=SDL::Rect(position+SDL::Point(unit, unit), square);
-		destinations[5]=SDL::Rect(position+SDL::Point(unit, 2*unit), square);
-		destinations[6]=SDL::Rect(position+SDL::Point(2*unit, 0), square);
-		destinations[7]=SDL::Rect(position+SDL::Point(2*unit, unit), square);
-		destinations[8]=SDL::Rect(position+SDL::Point(2*unit, 2*unit), square);
-		for(size_t i=0;i<destinations.size();++i)
+		int w = x2 - x, h = y2 - y, rx = 0, ry = 0;
+		int dx = w < 0 ? -1 : w > 0 ? 1 : 0, dy = h < 0 ? -1 : h > 0 ? 1 : 0;
+
+		bool possible = terrain[y][x] == ' ' && !(x == avoid_x && y == avoid_y);
+		while (possible && !(rx == w && ry == h))
 		{
-			if(!IsFreeLine(mapa, SDL::Line(Location().Center(), destinations[i].Center())))
+			if (ry == h || IsLesserRatio(rx + dx, w, ry + dy, h))
 			{
-				destinations.erase(i);
-				--i;
+				rx += dx;
+			}
+			else
+			{
+				ry += dy;
+			}
+			possible &= terrain[y + ry][x + rx] == ' ' && !(x + rx == avoid_x && y + ry == avoid_y);
+		}
+		return possible;
+	}
+public:
+	RaceCar(int x, int y) : x(x), y(y) {}
+
+	void Draw(SDL_Renderer *rend)
+	{
+		SDL_Rect rect{x * unit, y * unit, unit, unit};
+		SDL_RenderFillRect(rend, &rect);
+	}
+
+	std::vector<SDL_Point> FreeDestinations(const Terrain &terrain, const RaceCar& other)
+	{
+		int x2 = x + dx, y2 = y + dy;
+		SDL_Point possibilities[] = {
+			SDL_Point{x2, y2},
+			SDL_Point{x2, y2 + 1},
+			SDL_Point{x2, y2 - 1},
+			SDL_Point{x2 + 1, y2},
+			SDL_Point{x2 + 1, y2 + 1},
+			SDL_Point{x2 + 1, y2 - 1},
+			SDL_Point{x2 - 1, y2},
+			SDL_Point{x2 - 1, y2 + 1},
+			SDL_Point{x2 - 1, y2 - 1}
+		};
+
+		std::vector<SDL_Point> destinations;
+		for (auto point : possibilities)
+		{
+			if (MovePossible(terrain, x, y, point.x, point.y, other.x, other.y))
+			{
+				destinations.push_back(point);
 			}
 		}
 		return destinations;
 	}
+
+	void Move(int dest_x, int dest_y)
+	{
+		dx = dest_x - x;
+		dy = dest_y - y;
+		x += dx;
+		y += dy;
+	}
 };
 
-template<typename mapa_typ>
-void DrawMap(SDL::Renderer& rend, const mapa_typ& mapa)
+void DrawTerrain(SDL_Renderer *rend, const Terrain &terrain)
 {
-	for(size_t y=0;y<func::Size(mapa);++y)
+	SDL_SetRenderDrawColor(rend, 0, 0, 0, 255);
+	for (int y = 0; y < terrain.size(); ++y)
 	{
-		for(size_t x=0;x<func::Size(mapa[0]);++x)
+		for (int x = 0; x < terrain[y].size(); ++x)
 		{
-			if(mapa[y][x]=='#')
+			if (terrain[y][x] == '#')
 			{
-				rend.Draw(SDL::Rect(x*unit, y*unit, square), {0, 0, 0});
+				SDL_Rect rect{x * unit, y * unit, unit, unit};
+				SDL_RenderFillRect(rend, &rect);
 			}
-			rend.Draw(SDL::Line(SDL::Point(0, y)*unit, SDL::Point(mapa[0].size(), y)*unit), {0, 0, 0});
-			rend.Draw(SDL::Line(SDL::Point(x, 0)*unit, SDL::Point(x, func::Size(mapa))*unit), {0, 0, 0});
+			SDL_RenderDrawLine(rend, 0, y * unit, terrain[y].size() * unit, y * unit);
+			SDL_RenderDrawLine(rend, x * unit, 0, x * unit, terrain.size() * unit);
 		}
 	}
 }
 
 int main()
 {
-	string mapa[]={
-				"#################################################",
-				"####               ##############         #######",
-				"####               ##############         #######",
-				"####               #        #             #######",
-				"####                   #        #         #######",
-				"####               ##############         #######",
-				"####               ##############         #######",
-				"####               ##############         #######",
-				"####               ##############         #######",
-				"####               ##############         #######",
-				"####               ############           #######",
-				"####               ############      ############",
-				"####               ############           #######",
-				"####               ##############         #######",
-				"####               ##############         #######",
-				"####               ##############         #######",
-				"####               ##############         #######",
-				"####               ##############         #######",
-				"####    #          ##############         #######",
-				"####               ##############         #######",
-				"####                                      #######",
-				"####                                      #######",
-				"####                                      #######",
-				"####      ######                          #######",
-				"####      #    #                          #######",
-				"####      #    #                          #######",
-				"####           #                          #######",
-				"####           #   ##############         #######",
-				"####           #   ##############         #######",
-				"#################################################"
-	};
-	SDL::Window window("Formule", SDL::Rect(20, 40, 1000, 600));
-	SDL::Renderer rend(window);
+	Terrain terrain = {
+		"#################################################",
+		"####               ##############         #######",
+		"####               ##############         #######",
+		"####               #        #             #######",
+		"####                   #        #         #######",
+		"####               ##############         #######",
+		"####               ##############         #######",
+		"####               ##############         #######",
+		"####               ##############         #######",
+		"####               ##############         #######",
+		"####               ############           #######",
+		"####               ############      ############",
+		"####               ############           #######",
+		"####               ##############         #######",
+		"####               ##############         #######",
+		"####               ##############         #######",
+		"####               ##############         #######",
+		"####               ##############         #######",
+		"####    #          ##############         #######",
+		"####               ##############         #######",
+		"####                                      #######",
+		"####                                      #######",
+		"####                                      #######",
+		"####      ######                          #######",
+		"####      #    #                          #######",
+		"####      #    #                          #######",
+		"####           #                          #######",
+		"####           #   ##############         #######",
+		"####           #   ##############         #######",
+		"#################################################"};
 
-    Formule f1({200, 200});
-    Formule f2({320, 200});
-	bool red=true, repeat=true;
-    while(repeat)
+	SDL_Window *window = SDL_CreateWindow("RaceCar", 20, 40, unit * terrain[0].size(), unit * terrain.size(), 0);
+	SDL_Renderer *rend = SDL_CreateRenderer(window, -1, 0);
+
+	RaceCar car1(10, 10);
+	RaceCar car2(16, 10);
+	bool red = true, repeat = true;
+	while (repeat)
 	{
-		auto f1_dst=f1.FreeDestinations(mapa);
-		auto f2_dst=f2.FreeDestinations(mapa);
-		rend.Repaint(SDL::Color(255,255,255));
-		for(auto& dst:red?f1_dst:f2_dst)
+		SDL_SetRenderDrawColor(rend, 255, 255, 255, 255);
+		SDL_RenderClear(rend);
+
+		auto &playing_car = red ? car1 : car2;
+		auto destinations = playing_car.FreeDestinations(terrain, red ? car2 : car1);
+
+		SDL_SetRenderDrawColor(rend, red ? 255 : 160, 160, red ? 160 : 255, 255);
+		for (auto dst : destinations)
 		{
-			rend.Draw(dst, red?SDL::Color(255, 160, 160):SDL::Color(160, 160, 255));
+			SDL_Rect rect{dst.x * unit, dst.y * unit, unit, unit};
+			SDL_RenderFillRect(rend, &rect);
 		}
-		rend.Draw(f1.Location(), {255, 0, 0});
-		rend.Draw(f2.Location(), {0, 0, 255});
-		DrawMap(rend, mapa);
-		rend.Show();
-		if(red&&f1_dst.empty())
+
+		SDL_SetRenderDrawColor(rend, 255, 0, 0, 255);
+		car1.Draw(rend);
+		SDL_SetRenderDrawColor(rend, 0, 0, 255, 255);
+		car2.Draw(rend);
+
+		DrawTerrain(rend, terrain);
+		SDL_RenderPresent(rend);
+		if (destinations.empty())
 		{
-			SDL::MessageBox::Show("The end", "Red crashed!");
+			SDL_ShowSimpleMessageBox(0, "The end", red ? "Red crashed!" : "Blue crashed!", 0);
 			break;
 		}
-		else if(f2_dst.empty())
+		SDL_Event evt;
+		while (SDL_PollEvent(&evt))
 		{
-			SDL::MessageBox::Show("The end", "Blue crashed!");
-			break;
-		}
-		for(auto& evt: SDL::events::Handler())
-		{
-			if(evt.Type()==SDL::events::Type::Quit)
+			if (evt.type == SDL_QUIT)
 			{
-				repeat=false;
+				repeat = false;
 			}
-			else if(evt.Type()==SDL::events::Type::MouseButtonDown)
+			else if (evt.type == SDL_MOUSEBUTTONDOWN)
 			{
-				SDL::Point click_pos=evt.MouseButton().Position;
-				if(red)
+				for (auto dst : destinations)
 				{
-					for(auto& dest:f1_dst)
+					if (evt.button.x / unit == dst.x && evt.button.y / unit == dst.y)
 					{
-						if(dest.Encloses(click_pos))
-						{
-							f1.move=click_pos/unit*unit-f1.pos;
-							f1.pos=f1.pos+f1.move;
-							red=false;
-							break;
-						}
-					}
-				}
-				else
-				{
-					for(auto& dest:f2_dst)
-					{
-						if(dest.Encloses(click_pos))
-						{
-							f2.move=click_pos/unit*unit-f2.pos;
-							f2.pos=f2.pos+f2.move;
-							red=true;
-							break;
-						}
+						playing_car.Move(evt.button.x / unit, evt.button.y / unit);
+						red = !red;
+						break;
 					}
 				}
 			}
 		}
-		SDL::Wait(20);
+		SDL_Delay(20);
 	}
-    return 0;
+
+	SDL_DestroyRenderer(rend);
+	SDL_DestroyWindow(window);
+	return 0;
 }
